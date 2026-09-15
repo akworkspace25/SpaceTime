@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Space Time Experience v1</title>
+<style>
+  :root{
+    --bg:#05070d; --panel:rgba(14,18,30,0.82); --stroke:rgba(120,150,220,0.25);
+    --text:#dfe6f5; --muted:#8b97b5; --accent:#5aa9ff; --hot:#ff5a5a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow:hidden;}
+  #stage{position:fixed;inset:0;touch-action:none;}
+  #stage canvas{touch-action:none;}
+  .panel{position:fixed;background:var(--panel);border:1px solid var(--stroke);
+    border-radius:12px;padding:12px 14px;backdrop-filter:blur(8px);
+    box-shadow:0 8px 30px rgba(0,0,0,0.5);font-size:13px;line-height:1.45;}
+  #title{top:12px;left:12px;max-width:340px;}
+  #title h1{margin:0 0 4px;font-size:15px;letter-spacing:.2px;}
+  #title p{margin:0;color:var(--muted);font-size:12px;}
+  #controls{bottom:12px;left:12px;width:312px;}
+  #readout{top:12px;right:12px;width:230px;font-variant-numeric:tabular-nums;}
+  #stwrap{bottom:12px;right:12px;width:250px;}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;}
+  .row label{color:var(--muted);}
+  input[type=range]{width:150px;accent-color:var(--accent);}
+  button{background:#1a2338;color:var(--text);border:1px solid var(--stroke);
+    border-radius:8px;padding:7px 10px;font-size:12px;cursor:pointer;transition:.15s;}
+  button:hover{background:#243252;border-color:var(--accent);}
+  button:active{transform:translateY(1px);}
+  button:disabled{opacity:.5;cursor:default;}
+  #vrbtn{background:#173a6a;border-color:var(--accent);font-weight:600;}
+  .btnrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
+  .toggle{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;cursor:pointer;}
+  .kv{display:flex;justify-content:space-between;margin:5px 0;}
+  .kv b{color:var(--accent);font-weight:600;}
+  .legend{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:11px;color:var(--muted);}
+  .bar{height:10px;flex:1;border-radius:5px;
+    background:linear-gradient(90deg,#ff4d4d,#ffd24d,#7dff8f,#4dc3ff);}
+  .mcap{font-size:11px;color:var(--muted);margin-top:8px;}
+  .mbar{position:relative;height:12px;border-radius:6px;margin-top:4px;
+    background:linear-gradient(90deg,#0d0887,#7e03a8,#cc4778,#f89540,#f0f921);}
+  .mptr{position:absolute;top:-3px;width:2px;height:18px;background:#fff;border-radius:2px;
+    transform:translateX(-50%);box-shadow:0 0 4px rgba(0,0,0,.7);}
+  .mlabels{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:3px;}
+  #stcanvas{width:100%;height:150px;display:block;border-radius:8px;background:#080b14;}
+  .note{color:var(--muted);font-size:11px;margin-top:8px;line-height:1.4;}
+  #err{position:fixed;inset:0;display:none;align-items:center;justify-content:center;
+    text-align:center;padding:40px;color:#ff8a8a;font-size:14px;}
+  .hint{color:var(--muted);font-size:11px;margin-top:6px;}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div id="title" class="panel">
+  <h1>Spacetime Explorer</h1>
+  <p>Grid&nbsp;=&nbsp;space warping in 3D. Clocks&nbsp;=&nbsp;the <b>time</b> dimension — their tick speed
+  is how fast time flows there. Drag to orbit, scroll to zoom.</p>
+  <div class="btnrow" style="margin-top:10px;"><button id="vrbtn" disabled>Checking for VR…</button></div>
+  <div class="hint" id="vrhint"></div>
+</div>
+
+<div id="readout" class="panel">
+  <div class="kv"><span>Mass (scaled)</span><b id="rMass">0.25</b></div>
+  <div class="kv"><span>Schwarzschild r<sub>s</sub></span><b id="rRs">1.13</b></div>
+  <div class="kv"><span>Clock rate @ probe</span><b id="rDil">—</b></div>
+  <div class="kv"><span>Probe height r</span><b id="rH">—</b></div>
+  <div class="kv"><span>Fall speed</span><b id="rV">—</b></div>
+  <div class="note">The probe falls toward the <b>slow-clock</b> region. That pull is the gradient of the
+  time-flow field — <i>not</i> a spatial dent.</div>
+</div>
+
+<div id="controls" class="panel">
+  <div class="row">
+    <label for="mass">Mass</label>
+    <input id="mass" type="range" min="0" max="1" step="0.001" value="0.25"/>
+  </div>
+  <div class="mcap">ball colour = mass (size is fixed on purpose)</div>
+  <div class="mbar"><div class="mptr" id="mptr"></div></div>
+  <div class="mlabels"><span>light</span><span>heavy</span></div>
+  <div class="btnrow" style="margin-top:10px;">
+    <button id="drop">Drop probe</button>
+    <button id="reset">Reset probe</button>
+  </div>
+  <div class="btnrow" style="margin-top:10px;">
+    <label class="toggle"><input type="checkbox" id="tGrid" checked/> space grid</label>
+    <label class="toggle"><input type="checkbox" id="tClocks" checked/> clocks (time)</label>
+    <label class="toggle"><input type="checkbox" id="tTrail" checked/> trail</label>
+  </div>
+  <div class="btnrow" style="margin-top:10px;">
+    <button id="clockMode" style="flex:1;">Clock view: single plane</button>
+  </div>
+  <div class="row" id="planeRow">
+    <label for="planeY">Plane height&nbsp;Y</label>
+    <input id="planeY" type="range" min="-6" max="6" step="0.1" value="0"/>
+  </div>
+  <div class="legend">
+    <span>clocks: slow</span><div class="bar"></div><span>fast</span>
+  </div>
+  <div class="hint">Crank <b>Mass</b> toward a black-hole — the ball reddens/brightens but stays the same size.
+  Switch to <b>all nodes</b> to see the time-field fill 3D space; slide <b>Plane height</b> to sweep the slice.</div>
+</div>
+
+<div id="stwrap" class="panel">
+  <div style="font-size:12px;color:var(--muted);margin-bottom:6px;">
+    Spacetime diagram — <b>time</b> is up, <b>height</b> is across
+  </div>
+  <canvas id="stcanvas" width="250" height="150"></canvas>
+  <div class="note">Dashed = a still object (fixed height, still travelling up the time axis).
+  Blue = the falling probe: a straight path through curved time <i>looks</i> bent in space.</div>
+</div>
+
+<div id="err">Couldn't load the 3D library (Three.js) from the CDN.<br>
+Open this page over https with internet access.</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js" } }
+</script>
+<script>
+  setTimeout(function(){ if(!window.__threeLoaded) document.getElementById('err').style.display='flex'; }, 9000);
+</script>
+<script type="module">
+import * as THREE from 'three';
+window.__threeLoaded = true;
+const $ = id => document.getElementById(id);
+
+// =====================================================================
+//  config
+// =====================================================================
+const GRID_HALF = 6;
+const COORDS = [-6,-4,-2,0,2,4,6];
+const SUBDIV = 24;
+const RS_MAX = 4.5;
+const WARP_C = 0.26;
+const CLOCK_N = 9;
+const SOFT = 0.6;
+const BALL_R = 0.9;
+const HAND_SPEED = 2.4;
+const NODE_SCALE = 0.62;
+const PROBE_START = new THREE.Vector3(4.6,0,0);
+// VR: 1 world unit -> VR_SCALE metres. Grid = 12 units -> 1.56 m tabletop by default.
+const VR_SCALE = 0.13, VR_SCALE_MIN = 0.04, VR_SCALE_MAX = 0.9;
+
+const S = { mass:0.25, rs:0.25*RS_MAX, planeY:0, clockMode:'plane', grid:true, clocks:true, trail:true };
+
+// =====================================================================
+//  renderer / scene
+// =====================================================================
+const stage = $('stage');
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x05070d, 0.010);
+const camera = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.05, 400);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType('local-floor');
+renderer.xr.setFramebufferScaleFactor(1.0);
+stage.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xaabbee, 0x223355, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(10,16,12); scene.add(key);
+
+// Everything physical lives in `world`. Desktop: camera orbits, world = identity.
+// VR: HMD owns the camera, so we move/scale/rotate `world` instead.
+const world = new THREE.Group(); scene.add(world);
+
+// =====================================================================
+//  desktop orbit camera (disabled while presenting)
+// =====================================================================
+let theta=0.75, phi=0.72, radius=21;
+const target = new THREE.Vector3(0,0,0);
+function updateCam(){
+  camera.position.set(
+    target.x + radius*Math.sin(phi)*Math.cos(theta),
+    target.y + radius*Math.cos(phi),
+    target.z + radius*Math.sin(phi)*Math.sin(theta));
+  camera.lookAt(target);
+  camera.updateMatrixWorld();
+}
+updateCam();
+const inVR = () => renderer.xr.isPresenting;
+let dragging=false, px=0, py=0;
+renderer.domElement.addEventListener('mousedown', e=>{ if(inVR()) return; dragging=true; px=e.clientX; py=e.clientY; });
+window.addEventListener('mouseup', ()=>dragging=false);
+window.addEventListener('mousemove', e=>{
+  if(!dragging || inVR()) return;
+  theta += (e.clientX-px)*0.008; phi += (e.clientY-py)*0.008;
+  phi = Math.max(0.12, Math.min(Math.PI-0.12, phi));
+  px=e.clientX; py=e.clientY; updateCam();
+});
+renderer.domElement.addEventListener('wheel', e=>{
+  e.preventDefault(); if(inVR()) return;
+  radius *= (1+e.deltaY*0.0012);
+  radius = Math.max(7, Math.min(52, radius)); updateCam();
+}, {passive:false});
+let tX=0, tY=0, pinchDist=0, pinching=false;
+const touchGap = e => Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+renderer.domElement.addEventListener('touchstart', e=>{
+  e.preventDefault(); if(inVR()) return;
+  if(e.touches.length>=2){ pinching=true; pinchDist=touchGap(e); }
+  else if(e.touches.length===1){ pinching=false; tX=e.touches[0].clientX; tY=e.touches[0].clientY; }
+},{passive:false});
+renderer.domElement.addEventListener('touchmove', e=>{
+  e.preventDefault(); if(inVR()) return;
+  if(e.touches.length>=2){
+    const d=touchGap(e);
+    if(pinchDist>0 && d>0){ radius *= pinchDist/d; radius = Math.max(7, Math.min(52, radius)); updateCam(); }
+    pinchDist=d; pinching=true;
+  } else if(e.touches.length===1 && !pinching){
+    theta += (e.touches[0].clientX-tX)*0.01; phi += (e.touches[0].clientY-tY)*0.01;
+    phi = Math.max(0.12, Math.min(Math.PI-0.12, phi));
+    tX=e.touches[0].clientX; tY=e.touches[0].clientY; updateCam();
+  }
+},{passive:false});
+renderer.domElement.addEventListener('touchend', e=>{
+  if(e.touches.length<2){ pinching=false; pinchDist=0; }
+  if(e.touches.length===1){ tX=e.touches[0].clientX; tY=e.touches[0].clientY; }
+},{passive:false});
+
+// =====================================================================
+//  physics fields (unchanged)
+// =====================================================================
+function warp(x,y,z){
+  const r = Math.sqrt(x*x+y*y+z*z);
+  if(r < 1e-4) return [x,y,z];
+  let disp = WARP_C*S.rs*S.rs/(r+0.5);
+  disp = Math.min(disp, r*0.85);
+  const s = (r-disp)/r;
+  return [x*s, y*s, z*s];
+}
+function dilation(r){
+  const v = 1 - S.rs/Math.max(r, S.rs*1.0001);
+  return Math.sqrt(Math.max(v, 0.02));
+}
+const _c = new THREE.Color();
+function colorForRate(rate){ return _c.setHSL(0.66*rate, 0.75, 0.55); }
+const PLASMA = [[0.00,[13,8,135]],[0.25,[126,3,168]],[0.50,[204,71,120]],[0.75,[248,149,64]],[1.00,[240,249,33]]];
+function massColor(t){
+  t = Math.max(0, Math.min(1, t));
+  for(let i=0;i<PLASMA.length-1;i++){
+    const a=PLASMA[i], b=PLASMA[i+1];
+    if(t<=b[0]){
+      const f=(t-a[0])/(b[0]-a[0]);
+      return new THREE.Color(
+        (a[1][0]+(b[1][0]-a[1][0])*f)/255,
+        (a[1][1]+(b[1][1]-a[1][1])*f)/255,
+        (a[1][2]+(b[1][2]-a[1][2])*f)/255);
+    }
+  }
+  const L=PLASMA[PLASMA.length-1][1];
+  return new THREE.Color(L[0]/255,L[1]/255,L[2]/255);
+}
+
+// =====================================================================
+//  space grid
+// =====================================================================
+const baseVerts = [];
+function addLine(fixedA, fixedB, axis){
+  let prev=null;
+  for(let i=0;i<=SUBDIV;i++){
+    const t = -GRID_HALF + (2*GRID_HALF)*(i/SUBDIV);
+    const p = axis===0 ? [t,fixedA,fixedB] : axis===1 ? [fixedA,t,fixedB] : [fixedA,fixedB,t];
+    if(prev) baseVerts.push(prev[0],prev[1],prev[2], p[0],p[1],p[2]);
+    prev=p;
+  }
+}
+for(const a of COORDS) for(const b of COORDS){ addLine(a,b,0); addLine(a,b,1); addLine(a,b,2); }
+const baseArr = new Float32Array(baseVerts);
+const gridGeo = new THREE.BufferGeometry();
+gridGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(baseArr.length),3));
+const grid = new THREE.LineSegments(gridGeo, new THREE.LineBasicMaterial({color:0x3f6bd6, transparent:true, opacity:0.5}));
+grid.frustumCulled = false;
+world.add(grid);
+function rebuildGrid(){
+  const arr = gridGeo.attributes.position.array;
+  for(let i=0;i<baseArr.length;i+=3){
+    const w = warp(baseArr[i], baseArr[i+1], baseArr[i+2]);
+    arr[i]=w[0]; arr[i+1]=w[1]; arr[i+2]=w[2];
+  }
+  gridGeo.attributes.position.needsUpdate = true;
+}
+
+// =====================================================================
+//  central mass
+// =====================================================================
+const massMesh = new THREE.Mesh(new THREE.SphereGeometry(1,32,32),
+  new THREE.MeshStandardMaterial({color:0x120612, emissive:0x333333, emissiveIntensity:1.0, roughness:0.4}));
+world.add(massMesh);
+const halo = new THREE.Mesh(new THREE.SphereGeometry(1,24,24),
+  new THREE.MeshBasicMaterial({color:0x8888ff, transparent:true, opacity:0.15}));
+world.add(halo);
+
+// =====================================================================
+//  clocks — instanced (Quest 2 can't afford ~700 draw calls)
+// =====================================================================
+const ringGeo = new THREE.RingGeometry(0.28,0.36,22);
+const handGeo = new THREE.BoxGeometry(0.26,0.03,0.03); handGeo.translate(0.13,0,0);
+const clockMat = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.9, side:THREE.DoubleSide});
+function makeInstanced(geo, n){ const m = new THREE.InstancedMesh(geo, clockMat, n); m.frustumCulled=false; world.add(m); return m; }
+
+const planeList = [];
+for(let i=0;i<CLOCK_N;i++) for(let j=0;j<CLOCK_N;j++){
+  const x = -GRID_HALF + (2*GRID_HALF)*(i/(CLOCK_N-1));
+  const z = -GRID_HALF + (2*GRID_HALF)*(j/(CLOCK_N-1));
+  planeList.push({pos:new THREE.Vector3(x,0,z), x, z, r:0, angle:0});
+}
+const planeRings = makeInstanced(ringGeo, planeList.length);
+const planeHands = makeInstanced(handGeo, planeList.length);
+const qPlane = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI/2,0,0));
+let planeRingsDirty = true;
+
+const nodeList = [];
+for(const a of COORDS) for(const b of COORDS) for(const d of COORDS){
+  const r = Math.sqrt(a*a+b*b+d*d);
+  if(r < 0.5) continue;
+  nodeList.push({pos:new THREE.Vector3(a,b,d), r, angle:0});
+}
+const nodeRings = makeInstanced(ringGeo, nodeList.length);
+const nodeHands = makeInstanced(handGeo, nodeList.length);
+
+const _m=new THREE.Matrix4(), _q=new THREE.Quaternion(), _qz=new THREE.Quaternion(), _s=new THREE.Vector3(), _zAxis=new THREE.Vector3(0,0,1);
+function writeClocks(list, rings, hands, qBase, scale, dt, doRings){
+  _s.setScalar(scale);
+  for(let i=0;i<list.length;i++){
+    const c = list[i];
+    c.angle -= dilation(c.r)*HAND_SPEED*dt;
+    _qz.setFromAxisAngle(_zAxis, c.angle);
+    _q.copy(qBase).multiply(_qz);
+    _m.compose(c.pos, _q, _s); hands.setMatrixAt(i, _m);
+    if(doRings){ _m.compose(c.pos, qBase, _s); rings.setMatrixAt(i, _m); }
+  }
+  hands.instanceMatrix.needsUpdate = true;
+  if(doRings) rings.instanceMatrix.needsUpdate = true;
+}
+function updatePlanePositions(){
+  for(const ck of planeList){ ck.pos.y = S.planeY; ck.r = Math.sqrt(ck.x*ck.x + S.planeY*S.planeY + ck.z*ck.z); }
+  planeRingsDirty = true;
+}
+function refreshClockColors(){
+  for(let i=0;i<planeList.length;i++){ const col=colorForRate(dilation(planeList[i].r)); planeRings.setColorAt(i,col); planeHands.setColorAt(i,col); }
+  for(let i=0;i<nodeList.length;i++){ const col=colorForRate(dilation(nodeList[i].r)); nodeRings.setColorAt(i,col); nodeHands.setColorAt(i,col); }
+  for(const m of [planeRings,planeHands,nodeRings,nodeHands]) m.instanceColor.needsUpdate = true;
+}
+function setClockVisibility(){
+  const p = S.clocks && S.clockMode==='plane', n = S.clocks && S.clockMode==='nodes';
+  planeRings.visible = planeHands.visible = p;
+  nodeRings.visible = nodeHands.visible = n;
+}
+
+// =====================================================================
+//  probe + trail
+// =====================================================================
+const probe = new THREE.Mesh(new THREE.SphereGeometry(0.18,20,20),
+  new THREE.MeshStandardMaterial({color:0xffffff, emissive:0xaad4ff, emissiveIntensity:0.8}));
+probe.position.copy(PROBE_START); world.add(probe);
+const vel = new THREE.Vector3(0,0,0);
+let active=false, elapsed=0;
+const trailPts=[]; const TRAIL_MAX=240;
+const trailGeo=new THREE.BufferGeometry();
+trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_MAX*3),3));
+const trail=new THREE.Line(trailGeo, new THREE.LineBasicMaterial({color:0xaad4ff, transparent:true, opacity:0.8}));
+trail.frustumCulled=false; world.add(trail);
+const record=[]; let releaseHeight = PROBE_START.length();
+
+function resetProbe(){
+  probe.position.copy(PROBE_START); vel.set(0,0,0);
+  active=false; elapsed=0; trailPts.length=0; record.length=0;
+  releaseHeight = PROBE_START.length();
+  trailGeo.setDrawRange(0,0); drawSpacetimeHTML(); panelDirty=true;
+}
+function dropProbe(){ resetProbe(); active=true; }
+function stepProbe(dt){
+  if(!active) return;
+  const p = probe.position, r = p.length();
+  if(r < BALL_R + 0.22){ active=false; return; }
+  const rsoft2 = r*r + SOFT*SOFT;
+  const mu = 8.0*S.mass + 0.02;
+  const amag = mu / rsoft2;
+  vel.x += -amag*p.x/r*dt; vel.y += -amag*p.y/r*dt; vel.z += -amag*p.z/r*dt;
+  p.x += vel.x*dt; p.y += vel.y*dt; p.z += vel.z*dt;
+  elapsed += dt;
+  record.push({t:elapsed, h:p.length()}); if(record.length>600) record.shift();
+  trailPts.push(p.x,p.y,p.z);
+  if(trailPts.length>TRAIL_MAX*3) trailPts.splice(0, trailPts.length-TRAIL_MAX*3);
+  const arr=trailGeo.attributes.position.array;
+  for(let i=0;i<trailPts.length;i++) arr[i]=trailPts[i];
+  trailGeo.attributes.position.needsUpdate=true; trailGeo.setDrawRange(0, trailPts.length/3);
+  if(!inVR()) drawSpacetimeHTML();
+}
+
+// =====================================================================
+//  spacetime diagram — drawn into any 2D context at (ox,oy,W,H)
+// =====================================================================
+function drawSpacetime(ctx, ox, oy, W, H){
+  const k = W/250, pad = 22*k;
+  ctx.save(); ctx.translate(ox, oy);
+  ctx.strokeStyle='rgba(140,151,181,0.5)'; ctx.lineWidth=1*k;
+  ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(W-6*k,H-pad); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(pad,H-pad); ctx.lineTo(pad,6*k); ctx.stroke();
+  ctx.fillStyle='rgba(140,151,181,0.9)'; ctx.font=(10*k)+'px sans-serif'; ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.fillText('height →', W-56*k, H-8*k);
+  ctx.save(); ctx.translate(10*k,40*k); ctx.rotate(-Math.PI/2); ctx.fillText('time ↑',0,0); ctx.restore();
+  const hMax=GRID_HALF+0.5; let tMax=3; for(const r of record) if(r.t>tMax) tMax=r.t; tMax*=1.05;
+  const X = h => pad + (W-pad-8*k)*(h/hMax);
+  const Y = t => (H-pad) - (H-pad-8*k)*(t/tMax);
+  ctx.strokeStyle='rgba(180,190,210,0.6)'; ctx.setLineDash([4*k,4*k]);
+  ctx.beginPath(); ctx.moveTo(X(releaseHeight),Y(0)); ctx.lineTo(X(releaseHeight),Y(tMax)); ctx.stroke();
+  ctx.setLineDash([]);
+  if(record.length>1){
+    ctx.strokeStyle='#5aa9ff'; ctx.lineWidth=2*k; ctx.beginPath();
+    ctx.moveTo(X(record[0].h),Y(record[0].t));
+    for(const r of record) ctx.lineTo(X(r.h),Y(r.t));
+    ctx.stroke();
+    const last=record[record.length-1];
+    ctx.fillStyle='#aad4ff'; ctx.beginPath(); ctx.arc(X(last.h),Y(last.t),3*k,0,7); ctx.fill();
+  }
+  ctx.restore();
+}
+const stc = $('stcanvas'), sctx = stc.getContext('2d');
+function drawSpacetimeHTML(){ sctx.clearRect(0,0,stc.width,stc.height); drawSpacetime(sctx,0,0,stc.width,stc.height); }
+
+// =====================================================================
+//  actions (shared by HTML UI and VR panel)
+// =====================================================================
+function applyMass(){
+  S.rs = S.mass*RS_MAX;
+  massMesh.scale.setScalar(BALL_R);
+  halo.scale.setScalar(BALL_R*1.7);
+  const mc = massColor(S.mass);
+  massMesh.material.emissive.copy(mc);
+  massMesh.material.color.copy(mc).multiplyScalar(0.18);
+  massMesh.material.emissiveIntensity = 0.65 + S.mass*0.9;
+  halo.material.color.copy(mc);
+  rebuildGrid(); refreshClockColors();
+}
+function setMass(v){ S.mass=Math.max(0,Math.min(1,v)); applyMass(); syncHTML(); panelDirty=true; }
+function setPlaneY(v){ S.planeY=Math.max(-6,Math.min(6,v)); updatePlanePositions(); refreshClockColors(); syncHTML(); panelDirty=true; }
+function toggleClockMode(){ S.clockMode = S.clockMode==='plane' ? 'nodes' : 'plane'; setClockVisibility(); syncHTML(); panelDirty=true; }
+function setGrid(b){ S.grid=b; grid.visible=b; syncHTML(); panelDirty=true; }
+function setClocks(b){ S.clocks=b; setClockVisibility(); syncHTML(); panelDirty=true; }
+function setTrail(b){ S.trail=b; trail.visible=b; syncHTML(); panelDirty=true; }
+
+function syncHTML(){
+  $('mass').value = S.mass;
+  $('rMass').textContent = S.mass.toFixed(2);
+  $('rRs').textContent = S.rs.toFixed(2);
+  $('mptr').style.left = (S.mass*100)+'%';
+  $('planeY').value = S.planeY;
+  $('planeRow').style.display = (S.clocks && S.clockMode==='plane') ? 'flex' : 'none';
+  $('clockMode').textContent = 'Clock view: ' + (S.clockMode==='plane' ? 'single plane' : 'all nodes');
+  $('tGrid').checked = S.grid; $('tClocks').checked = S.clocks; $('tTrail').checked = S.trail;
+}
+$('mass').addEventListener('input', e=> setMass(parseFloat(e.target.value)));
+$('drop').addEventListener('click', dropProbe);
+$('reset').addEventListener('click', resetProbe);
+$('tGrid').addEventListener('change', e=> setGrid(e.target.checked));
+$('tClocks').addEventListener('change', e=> setClocks(e.target.checked));
+$('tTrail').addEventListener('change', e=> setTrail(e.target.checked));
+$('clockMode').addEventListener('click', toggleClockMode);
+$('planeY').addEventListener('input', e=> setPlaneY(parseFloat(e.target.value)));
+window.addEventListener('resize', ()=>{
+  if(inVR()) return;
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// =====================================================================
+//  VR control panel — canvas texture on a plane, driven by controller rays
+// =====================================================================
+const PW=960, PH=660;
+const pcv = document.createElement('canvas'); pcv.width=PW; pcv.height=PH;
+const pctx = pcv.getContext('2d');
+const panelTex = new THREE.CanvasTexture(pcv);
+panelTex.colorSpace = THREE.SRGBColorSpace;
+panelTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.44),
+  new THREE.MeshBasicMaterial({map:panelTex, transparent:true, side:THREE.DoubleSide}));
+panel.visible=false; scene.add(panel);
+let panelDirty = true;
+
+const FONT = '"Segoe UI",Roboto,Helvetica,Arial,sans-serif';
+const W = [];   // widgets
+const slider = (id,label,x,y,w,min,max,get,set,en)=> W.push({id,type:'slider',label,x,y,w,h:36,min,max,get,set,en,hover:false});
+const button = (id,label,x,y,w,h,act,en)=> W.push({id,type:'button',label,x,y,w,h,act,en,hover:false});
+const toggle = (id,label,x,y,w,get,set)=> W.push({id,type:'toggle',label,x,y,w,h:32,get,set,hover:false});
+
+slider('mass','Mass', 28,152,552, 0,1, ()=>S.mass, setMass);
+button('drop','Drop probe', 28,222,220,52, dropProbe);
+button('reset','Reset probe', 262,222,220,52, resetProbe);
+button('clockMode', ()=>'Clock view: '+(S.clockMode==='plane'?'single plane':'all nodes'), 496,222,436,52, toggleClockMode);
+toggle('tGrid','space grid', 28,300,180, ()=>S.grid, setGrid);
+toggle('tClocks','clocks (time)', 228,300,190, ()=>S.clocks, setClocks);
+toggle('tTrail','trail', 428,300,150, ()=>S.trail, setTrail);
+slider('planeY','Plane height Y', 28,398,552, -6,6, ()=>S.planeY, setPlaneY, ()=>S.clocks && S.clockMode==='plane');
+
+function rr(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r); c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+function wrapText(c,text,x,y,maxW,lh){
+  const words=text.split(' '); let line='';
+  for(const wd of words){
+    const t=line?line+' '+wd:wd;
+    if(c.measureText(t).width>maxW && line){ c.fillText(line,x,y); y+=lh; line=wd; } else line=t;
+  }
+  if(line) c.fillText(line,x,y);
+  return y+lh;
+}
+function enabled(w){ return w.en ? w.en() : true; }
+function drawWidget(c,w){
+  c.globalAlpha = enabled(w) ? 1 : 0.35;
+  c.textBaseline='alphabetic'; c.textAlign='left';
+  if(w.type==='slider'){
+    c.fillStyle='#8b97b5'; c.font='16px '+FONT; c.fillText(w.label, w.x, w.y-20);
+    const v=(w.get()-w.min)/(w.max-w.min);
+    c.fillStyle='rgba(120,150,220,0.25)'; rr(c,w.x,w.y-4,w.w,8,4); c.fill();
+    c.fillStyle='#5aa9ff'; rr(c,w.x,w.y-4,Math.max(8,w.w*v),8,4); c.fill();
+    c.beginPath(); c.arc(w.x+w.w*v, w.y, w.hover?15:12, 0, 7); c.fillStyle=w.hover?'#ffffff':'#dfe6f5'; c.fill();
+    c.fillStyle='#dfe6f5'; c.font='600 16px '+FONT; c.textAlign='right'; c.fillText(w.get().toFixed(2), w.x+w.w, w.y-20); c.textAlign='left';
+  } else if(w.type==='button'){
+    c.fillStyle = w.hover ? '#2a3b60' : '#1a2338'; rr(c,w.x,w.y,w.w,w.h,12); c.fill();
+    c.strokeStyle = w.hover ? '#5aa9ff' : 'rgba(120,150,220,0.35)'; c.lineWidth=2; c.stroke();
+    c.fillStyle='#dfe6f5'; c.font='600 18px '+FONT; c.textAlign='center'; c.textBaseline='middle';
+    c.fillText(typeof w.label==='function'?w.label():w.label, w.x+w.w/2, w.y+w.h/2);
+  } else if(w.type==='toggle'){
+    const on=w.get();
+    c.fillStyle = on ? '#5aa9ff' : '#1a2338'; rr(c,w.x,w.y+3,26,26,6); c.fill();
+    c.strokeStyle = w.hover ? '#ffffff' : 'rgba(120,150,220,0.45)'; c.lineWidth=2; c.stroke();
+    if(on){ c.strokeStyle='#05070d'; c.lineWidth=3; c.beginPath(); c.moveTo(w.x+6,w.y+16); c.lineTo(w.x+11,w.y+22); c.lineTo(w.x+20,w.y+9); c.stroke(); }
+    c.fillStyle = w.hover ? '#dfe6f5' : '#8b97b5'; c.font='16px '+FONT; c.textBaseline='middle'; c.fillText(w.label, w.x+36, w.y+16);
+  }
+  c.globalAlpha=1; c.textBaseline='alphabetic'; c.textAlign='left';
+}
+function drawPanel(){
+  const c=pctx; c.clearRect(0,0,PW,PH);
+  c.fillStyle='rgba(14,18,30,0.93)'; rr(c,0,0,PW,PH,28); c.fill();
+  c.strokeStyle='rgba(120,150,220,0.35)'; c.lineWidth=2; c.stroke();
+  c.textAlign='left'; c.textBaseline='alphabetic';
+  c.fillStyle='#dfe6f5'; c.font='600 30px '+FONT; c.fillText('Spacetime Explorer', 28, 58);
+  c.fillStyle='#8b97b5'; c.font='16px '+FONT; c.fillText('Grid = space warping. Clock speed = how fast time flows there.', 28, 88);
+
+  const rp = probe.position.length();
+  const rows=[['Mass (scaled)',S.mass.toFixed(2)],['Schwarzschild rs',S.rs.toFixed(2)],
+              ['Clock rate @ probe',dilation(rp).toFixed(3)],['Probe height r',rp.toFixed(2)],['Fall speed',vel.length().toFixed(2)]];
+  rows.forEach((r,i)=>{
+    const y=52+i*28;
+    c.textAlign='left'; c.fillStyle='#8b97b5'; c.font='17px '+FONT; c.fillText(r[0],620,y);
+    c.textAlign='right'; c.fillStyle='#5aa9ff'; c.font='600 17px '+FONT; c.fillText(r[1],932,y);
+  });
+  c.textAlign='left';
+
+  for(const w of W) drawWidget(c,w);
+
+  // plasma mass bar
+  const g=c.createLinearGradient(28,0,580,0);
+  PLASMA.forEach(p=>g.addColorStop(p[0],`rgb(${p[1][0]},${p[1][1]},${p[1][2]})`));
+  c.fillStyle=g; rr(c,28,176,552,10,5); c.fill();
+  c.fillStyle='#fff'; c.fillRect(28+552*S.mass-1,172,2,18);
+  c.fillStyle='#8b97b5'; c.font='13px '+FONT; c.fillText('light',28,204); c.textAlign='right'; c.fillText('heavy — ball colour = mass, size fixed',580,204); c.textAlign='left';
+
+  // clock legend
+  const lg=c.createLinearGradient(140,0,520,0);
+  [['#ff4d4d',0],['#ffd24d',.33],['#7dff8f',.66],['#4dc3ff',1]].forEach(s=>lg.addColorStop(s[1],s[0]));
+  c.fillStyle='#8b97b5'; c.font='15px '+FONT; c.textBaseline='middle'; c.fillText('clocks: slow',28,452);
+  c.fillStyle=lg; rr(c,140,447,380,10,5); c.fill();
+  c.fillStyle='#8b97b5'; c.fillText('fast',536,452); c.textBaseline='alphabetic';
+
+  c.fillStyle='#8b97b5'; c.font='15px '+FONT;
+  let y=wrapText(c,'Push Mass toward a black hole: the ball reddens and brightens but keeps its size. Switch to all nodes to see the time field fill 3D space; sweep the plane height to slice it.',28,490,552,21);
+  c.fillStyle='#6f7c9c'; c.font='14px '+FONT;
+  y=wrapText(c,'Left stick turns the model, right stick zooms it. Hold grip to grab and move it. Trigger presses this panel.',28,y+8,552,20);
+  wrapText(c,'A or X drops the probe, B or Y resets it. Click a stick to bring the model and panel back in front of you.',28,y,552,20);
+
+  // spacetime diagram
+  c.fillStyle='#8b97b5'; c.font='15px '+FONT; c.fillText('Spacetime diagram: time is up, height is across',620,306);
+  c.fillStyle='#080b14'; rr(c,620,314,312,240,10); c.fill();
+  drawSpacetime(c,620,314,312,240);
+  c.fillStyle='#8b97b5'; c.font='14px '+FONT;
+  wrapText(c,'Dashed: a still object, fixed height, still moving up the time axis. Blue: the falling probe. A straight path through curved time looks bent in space.',620,578,312,19);
+
+  panelTex.needsUpdate=true; panelDirty=false;
+}
+function hitWidget(x,y){
+  for(const w of W){
+    if(!enabled(w)) continue;
+    const pad = w.type==='slider' ? 18 : 4;
+    const y0 = w.type==='slider' ? w.y-pad : w.y-pad, y1 = w.type==='slider' ? w.y+pad : w.y+w.h+pad;
+    if(x>=w.x-14 && x<=w.x+w.w+14 && y>=y0 && y<=y1) return w;
+  }
+  return null;
+}
+function setSliderFromPx(w,x){ const v=Math.max(0,Math.min(1,(x-w.x)/w.w)); w.set(w.min+v*(w.max-w.min)); }
+
+// =====================================================================
+//  controllers
+// =====================================================================
+const raycaster = new THREE.Raycaster();
+const _rot = new THREE.Matrix4(), _v = new THREE.Vector3();
+const rayGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1)]);
+const ctrls = [];
+for(let i=0;i<2;i++){
+  const obj = renderer.xr.getController(i); scene.add(obj);
+  const ray = new THREE.Line(rayGeo, new THREE.LineBasicMaterial({color:0x5aa9ff, transparent:true, opacity:0.55}));
+  ray.scale.z = 1.5; obj.add(ray);
+  obj.add(new THREE.Mesh(new THREE.SphereGeometry(0.012,10,10), new THREE.MeshBasicMaterial({color:0xaad4ff})));
+  const cursor = new THREE.Mesh(new THREE.SphereGeometry(0.008,10,10), new THREE.MeshBasicMaterial({color:0xffffff}));
+  cursor.visible=false; scene.add(cursor);
+  const cs = {obj, ray, cursor, src:null, hover:null, drag:null, grab:null, onPanel:false, px:0, py:0, prev:[]};
+  obj.addEventListener('connected', e=>{ cs.src=e.data; });
+  obj.addEventListener('disconnected', ()=>{ cs.src=null; cs.drag=null; cs.grab=null; });
+  obj.addEventListener('selectstart', ()=>{
+    const w=cs.hover; if(!w || !enabled(w)) return;
+    if(w.type==='slider'){ cs.drag=w; if(cs.onPanel) setSliderFromPx(w,cs.px); }
+    else if(w.type==='button') w.act();
+    else if(w.type==='toggle') w.set(!w.get());
+    panelDirty=true;
+  });
+  obj.addEventListener('selectend', ()=>{ cs.drag=null; });
+  obj.addEventListener('squeezestart', ()=>{
+    cs.grab={cpos:new THREE.Vector3().setFromMatrixPosition(obj.matrixWorld), wpos:world.position.clone()};
+  });
+  obj.addEventListener('squeezeend', ()=>{ cs.grab=null; });
+  ctrls.push(cs);
+}
+const dz = v => Math.abs(v)<0.15 ? 0 : v;
+function pressed(cs,b,k){ const now=!!(b[k]&&b[k].pressed), was=!!cs.prev[k]; cs.prev[k]=now; return now&&!was; }
+
+function handleControllers(dt){
+  let hoverChanged=false;
+  for(const cs of ctrls){
+    const c=cs.obj;
+    raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
+    _rot.identity().extractRotation(c.matrixWorld);
+    raycaster.ray.direction.set(0,0,-1).applyMatrix4(_rot);
+    let hoverW=null, len=1.5;
+    cs.onPanel=false; cs.cursor.visible=false;
+    if(panel.visible){
+      const hits=raycaster.intersectObject(panel,false);
+      if(hits.length){
+        const h=hits[0]; len=h.distance;
+        cs.cursor.position.copy(h.point); cs.cursor.visible=true;
+        cs.px=h.uv.x*PW; cs.py=(1-h.uv.y)*PH; cs.onPanel=true;
+        hoverW=hitWidget(cs.px,cs.py);
+      }
+    }
+    cs.ray.scale.z=len;
+    if(cs.drag){ if(cs.onPanel) setSliderFromPx(cs.drag,cs.px); hoverW=cs.drag; }
+    if(hoverW!==cs.hover){ cs.hover=hoverW; hoverChanged=true; }
+
+    const gp = cs.src && cs.src.gamepad;
+    if(gp){
+      const ax=dz(gp.axes[2]||0), ay=dz(gp.axes[3]||0);
+      if(cs.src.handedness==='left'){
+        world.rotation.y -= ax*1.8*dt;
+        world.position.y -= ay*0.4*dt;
+      } else {
+        world.rotation.y -= ax*1.8*dt;
+        if(ay){ const s=THREE.MathUtils.clamp(world.scale.x*Math.exp(-ay*1.3*dt), VR_SCALE_MIN, VR_SCALE_MAX); world.scale.setScalar(s); }
+      }
+      const b=gp.buttons;
+      if(pressed(cs,b,4)) dropProbe();
+      if(pressed(cs,b,5)) resetProbe();
+      if(pressed(cs,b,3)) placeForHead();
+    }
+    if(cs.grab){ _v.setFromMatrixPosition(c.matrixWorld); world.position.copy(cs.grab.wpos).add(_v).sub(cs.grab.cpos); }
+  }
+  if(hoverChanged){ for(const w of W) w.hover = ctrls.some(cs=>cs.hover===w); panelDirty=true; }
+}
+
+// place model + panel relative to the current head pose
+const headPos=new THREE.Vector3(), fwd=new THREE.Vector3(), right=new THREE.Vector3(), UP=new THREE.Vector3(0,1,0);
+const qCam=new THREE.Quaternion(), qWorldInv=new THREE.Quaternion(), qBill=new THREE.Quaternion();
+function placeForHead(){
+  headPos.setFromMatrixPosition(camera.matrixWorld);
+  qCam.setFromRotationMatrix(camera.matrixWorld);
+  fwd.set(0,0,-1).applyQuaternion(qCam); fwd.y=0;
+  if(fwd.lengthSq()<1e-4) fwd.set(0,0,-1); fwd.normalize();
+  right.crossVectors(fwd,UP).normalize();
+  world.position.copy(headPos).addScaledVector(fwd,1.15); world.position.y=headPos.y-0.15;
+  world.rotation.set(0, Math.atan2(-right.z, right.x), 0);   // probe start (+x) sits to the user's right
+  world.scale.setScalar(VR_SCALE);
+  panel.position.copy(headPos).addScaledVector(fwd,0.62).addScaledVector(right,-0.42); panel.position.y=headPos.y-0.30;
+  panel.lookAt(headPos);
+  panelDirty=true;
+}
+
+// =====================================================================
+//  XR session
+// =====================================================================
+let needPlace=false;
+const vrbtn=$('vrbtn'), vrhint=$('vrhint');
+function vrUnavailable(msg){
+  vrbtn.textContent='VR not available'; vrbtn.disabled=true;
+  vrhint.textContent = msg || 'Open this page over https in the Quest Browser to enter VR. Desktop controls work here.';
+}
+if(navigator.xr){
+  navigator.xr.isSessionSupported('immersive-vr').then(ok=>{
+    if(ok){ vrbtn.disabled=false; vrbtn.textContent='Enter VR';
+      vrhint.textContent='Headset found. Left stick turns, right stick zooms, grip grabs the model, trigger presses the panel.'; }
+    else vrUnavailable();
+  }).catch(()=>vrUnavailable());
+} else vrUnavailable();
+vrbtn.addEventListener('click', async ()=>{
+  try{
+    if(inVR()){ await renderer.xr.getSession().end(); return; }
+    const session = await navigator.xr.requestSession('immersive-vr', {optionalFeatures:['local-floor','bounded-floor']});
+    await renderer.xr.setSession(session);
+  }catch(e){ vrhint.textContent='Could not start VR: '+e.message; }
+});
+renderer.xr.addEventListener('sessionstart', ()=>{
+  needPlace=true; panel.visible=true; vrbtn.textContent='Exit VR';
+  for(const w of W) w.hover=false;
+});
+renderer.xr.addEventListener('sessionend', ()=>{
+  panel.visible=false; vrbtn.textContent='Enter VR';
+  for(const cs of ctrls){ cs.cursor.visible=false; cs.drag=null; cs.grab=null; cs.hover=null; }
+  world.position.set(0,0,0); world.rotation.set(0,0,0); world.scale.setScalar(1);
+  camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight); updateCam(); syncHTML(); drawSpacetimeHTML();
+});
+
+// =====================================================================
+//  main loop
+// =====================================================================
+const clock = new THREE.Clock();
+let frameCount=0;
+updatePlanePositions(); applyMass(); setClockVisibility(); syncHTML(); drawSpacetimeHTML();
+
+renderer.setAnimationLoop((time, frame)=>{
+  let dt = clock.getDelta(); if(dt>0.05) dt=0.05; frameCount++;
+  const xr = inVR();
+  if(xr){
+    if(needPlace && frame){
+      const pose = frame.getViewerPose(renderer.xr.getReferenceSpace());
+      if(pose){ placeForHead(); needPlace=false; }
+    }
+    handleControllers(dt);
+  }
+
+  // billboard quaternion in world-local frame: R_local = R_world^-1 · R_cam
+  qCam.setFromRotationMatrix(camera.matrixWorld);
+  qWorldInv.copy(world.quaternion).invert();
+  qBill.copy(qWorldInv).multiply(qCam);
+
+  if(S.clocks){
+    if(S.clockMode==='plane'){ writeClocks(planeList, planeRings, planeHands, qPlane, 1.0, dt, planeRingsDirty); planeRingsDirty=false; }
+    else writeClocks(nodeList, nodeRings, nodeHands, qBill, NODE_SCALE, dt, true);
+  }
+  stepProbe(dt*1.4);
+
+  if(xr){
+    if((panelDirty || active) && frameCount%2===0) drawPanel();
+  } else {
+    const rp = probe.position.length();
+    $('rDil').textContent = dilation(rp).toFixed(3);
+    $('rH').textContent = rp.toFixed(2);
+    $('rV').textContent = vel.length().toFixed(2);
+  }
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
