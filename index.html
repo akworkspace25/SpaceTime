@@ -154,6 +154,11 @@
   <p>Clocks: flow of time at each point. Red = slow, blue = fast. Single plane shows one slice (sweep with Plane height); all nodes shows the full 3D time field.</p>
   <p>Probe: released at rest on the +x face of the cube, it falls along the time-flow gradient. The probe trail and the spacetime diagram record its path.</p>
   <p>Light: Emit fires one beam from every node on the +x face toward the mass. Beams follow exact Schwarzschild null geodesics (grid coordinates are isotropic: horizon at r<sub>s</sub>/4, photon sphere at 0.93 r<sub>s</sub>). Every beam with impact parameter b &lt; 2.6 r<sub>s</sub> is captured (the black-hole shadow); beams just outside skim the photon sphere and exit sideways or backwards. At high Mass the shadow exceeds the cube face, so most beams are swallowed, as GR predicts.</p>
+  <div class="sec">Physics or metaphor?</div>
+  <p><b>Light beams: exact GR.</b> Schwarzschild null geodesics, solved as Fermat rays with index n = (1+a)³/(1−a), a = r<sub>s</sub>/4ρ; checked against the 4GM/bc² deflection and the 2.6 r<sub>s</sub> capture radius.</p>
+  <p><b>Clocks: exact GR.</b> Static-observer rate (1−a)/(1+a), zero at the horizon r<sub>s</sub>/4.</p>
+  <p><b>Grid: metaphor.</b> The dent is artwork, not a measurement. Curved space has nothing to sag into; an honest drawing is straight lines with stretched spacing. Light and the probe do not follow grid lines.</p>
+  <p><b>Probe: Newtonian toy</b> (a = −μ/r²), not a GR geodesic; it stops at the ball as a visual collision. <b>Ball: decoration only</b>; the physics treats the mass as a point or black hole, non-rotating and uncharged.</p>
   <div class="sec">Desktop</div>
   <p>Drag to orbit, scroll or pinch to zoom. All controls are in the bottom-left box.</p>
   <div class="sec">Quest</div>
@@ -811,16 +816,21 @@ function drawMain(c){
 function drawHelp(c){
   c.textAlign='left'; c.textBaseline='alphabetic';
   c.fillStyle='#dfe6f5'; c.font='600 30px '+FONT; c.fillText('How to use', 28, 58);
-  const H=(t,y)=>{ section(c,t,28,y,904); return y+30; };
-  const P=(t,y)=>{ c.fillStyle='#c5cee3'; c.font='16px '+FONT; return wrapText(c,t,28,y,904,23); };
+  const H=(t,y)=>{ section(c,t,28,y,904); return y+26; };
+  const P=(t,y)=>{ c.fillStyle='#c5cee3'; c.font='15px '+FONT; return wrapText(c,t,28,y,904,21); };
   let y=110;
   y=H('What you see',y);
   y=P('Blue grid: space, warped by the central mass. Schwarzschild radius rs = Mass × 4.5. The cube always spans ±6 units; Grid nodes only changes how many lines fill it.',y);
   y=P('Clocks: the flow of time at each point. Red = slow, blue = fast. Single plane shows one slice you can sweep with Plane height; all nodes shows the whole 3D time field.',y);
   y=P('Probe: released at rest on the +x face of the cube, it falls along the time-flow gradient. The probe trail and the spacetime diagram record its path.',y);
-  y=P('Light: Emit fires one beam from every node on the +x face toward the mass. Beams follow exact Schwarzschild null geodesics (grid coordinates are isotropic: horizon at rs/4, photon sphere at 0.93 rs). Every beam with impact parameter b below 2.6 rs is captured, which is the black hole shadow; beams just outside skim the photon sphere and leave sideways or even backwards. Light also slows near the mass (Shapiro delay). Beams: by source colours each beam by where it left the +x face (hue = direction from the face centre, brighter = further out), so you can tell which source a bent beam came from. At high Mass the shadow is wider than the cube face, so most beams are swallowed: that is what general relativity predicts.',y+4);
+  y=P('Light: Emit fires one beam from every node on the +x face toward the mass. Every beam with impact parameter b below 2.6 rs is captured (the black hole shadow); beams just outside skim the photon sphere and leave sideways or even backwards, and light slows near the mass (Shapiro delay). At high Mass the shadow is wider than the cube face, so most beams are swallowed: that is what general relativity predicts. Beams: by source colours each beam by where it left the face so you can trace a bent beam to its origin.',y+4);
   y=H('Quest controls',y+8);
   y=P('Left stick: turn the model, push up or down to raise or lower it. Right stick: turn, push up or down to zoom. Hold grip on the model to move it. Point at this panel and hold grip to pick the panel up and place it anywhere. Trigger presses buttons and drags sliders. A or X drops the probe, B or Y resets it. Click either stick to bring the model and panel back in front of you.',y);
+  y=H('Physics or metaphor?',y+8);
+  y=P('Light beams: exact general relativity. Schwarzschild null geodesics solved as Fermat rays with index n = (1+a)^3/(1-a), a = rs/4ρ, checked against the 4GM/bc² deflection and the 2.6 rs capture radius.',y);
+  y=P('Clocks: exact GR. Static-observer rate (1-a)/(1+a), zero at the horizon rs/4.',y);
+  y=P('Grid: metaphor. The dent is artwork, not a measurement. Curved space has nothing to sag into; an honest drawing is straight lines with stretched spacing. Light and the probe do not follow grid lines.',y);
+  y=P('Probe: Newtonian toy, a = -μ/r², not a GR geodesic; it stops at the ball as a visual collision. Ball: decoration only; the physics treats the mass as a point or black hole, non-rotating and uncharged.',y);
   y=H('Panel',y+8);
   y=P('Mass drives all physics. Ball size is visual only and does not change gravity, clocks or light. Grid nodes sets node density from 5 to 15 per edge. Grid detail sets segments per line; raise it if warped lines look angular. Clock dial size scales every clock, useful at 15 × 15 × 15. On Quest, keep Grid nodes at 11 or below in all-nodes clock view if the frame rate drops.',y);
   for(const w of W) if(w.page==='help') drawWidget(c,w);
