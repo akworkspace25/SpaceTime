@@ -96,6 +96,9 @@
     <button id="emit">Emit light</button>
     <button id="clearLight">Clear light</button>
   </div>
+  <div class="btnrow">
+    <button id="beamColor">Beam colour: yellow</button>
+  </div>
 
   <div class="sec">View</div>
   <div class="btnrow">
@@ -196,7 +199,7 @@ const BEAM_LIFE = 15;                     // s, safety cut for beams stuck near 
 const VR_SCALE = 0.13, VR_SCALE_MIN = 0.04, VR_SCALE_MAX = 0.9;
 
 const S = { mass:0.25, rs:0.25*RS_MAX, ballVis:1.0, clockSize:1.0, gridN:7, subdiv:SUBDIV_DEFAULT, planeY:0,
-            clockMode:'plane', grid:true, clocks:true, trail:true };
+            clockMode:'plane', beamColor:'yellow', grid:true, clocks:true, trail:true };
 let COORDS = [];
 function makeCoords(n){ COORDS = Array.from({length:n}, (_,i)=> -GRID_HALF + 2*GRID_HALF*i/(n-1)); }
 makeCoords(S.gridN);
@@ -207,6 +210,7 @@ makeCoords(S.gridN);
 const stage = $('stage');
 const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x05070d, 0.010);
+scene.background = new THREE.Color(0x05070d);
 const camera = new THREE.PerspectiveCamera(52, innerWidth/innerHeight, 0.05, 400);
 const renderer = new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -214,6 +218,10 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.xr.enabled = true;
 renderer.xr.setReferenceSpaceType('local-floor');
 renderer.xr.setFramebufferScaleFactor(1.0);
+// three.js defaults XR foveation to 1.0 (max). On Quest the low-res periphery tiles render fog/gradients with a
+// visibly different shade than the full-res centre tiles, showing up as faint rectangular blocks. 0 = uniform quality.
+renderer.xr.setFoveation(0);
+renderer.setClearColor(0x05070d, 1);
 stage.appendChild(renderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0xaabbee, 0x223355, 0.9));
@@ -468,12 +476,29 @@ function stepProbe(dt){
 // =====================================================================
 const beamGeo = new THREE.BufferGeometry();
 beamGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(BEAM_MAX*(BEAM_PTS-1)*2*3), 3));
+beamGeo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(BEAM_MAX*(BEAM_PTS-1)*2*3), 3));
 beamGeo.setDrawRange(0,0);
-const beams = new THREE.LineSegments(beamGeo, new THREE.LineBasicMaterial({color:0xffd66b, transparent:true, opacity:0.85}));
+const beams = new THREE.LineSegments(beamGeo, new THREE.LineBasicMaterial({vertexColors:true, transparent:true, opacity:0.85}));
 beams.frustumCulled=false; world.add(beams);
-const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.07,8,8), new THREE.MeshBasicMaterial({color:0xfff2b0}), BEAM_MAX);
+const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.07,8,8), new THREE.MeshBasicMaterial({color:0xffffff}), BEAM_MAX);
 heads.frustumCulled=false; heads.count=0; world.add(heads);
-const beam = Array.from({length:BEAM_MAX}, ()=>({p:new THREE.Vector3(), d:new THREE.Vector3(), last:new THREE.Vector3(), alive:false, pts:0}));
+const beam = Array.from({length:BEAM_MAX}, ()=>({p:new THREE.Vector3(), d:new THREE.Vector3(), last:new THREE.Vector3(), col:new THREE.Color(), alive:false, pts:0}));
+const segBeam = new Int16Array(BEAM_MAX*(BEAM_PTS-1));   // segment index -> beam index, for recolouring
+const BEAM_YELLOW = new THREE.Color(0xffd66b);
+// colour keyed to the SOURCE node on the +x face: hue = angle around the face centre, lightness = distance from it
+function beamColorFor(y,z,out){
+  if(S.beamColor==='yellow') return out.copy(BEAM_YELLOW);
+  const hue = (Math.atan2(z,y)/(2*Math.PI) + 1) % 1;
+  const rad = Math.min(1, Math.hypot(y,z)/(GRID_HALF*Math.SQRT2));
+  return out.setHSL(hue, 0.95, 0.42 + 0.33*rad);
+}
+function recolorBeams(){
+  for(let i=0;i<nBeams;i++){ const b=beam[i]; beamColorFor(b.p0y,b.p0z,b.col); heads.setColorAt(i,b.col); }
+  const col=beamGeo.attributes.color.array;
+  for(let sIdx=0;sIdx<segCount;sIdx++){ const c=beam[segBeam[sIdx]].col, o=sIdx*6; col[o]=col[o+3]=c.r; col[o+1]=col[o+4]=c.g; col[o+2]=col[o+5]=c.b; }
+  beamGeo.attributes.color.needsUpdate=true;
+  if(heads.instanceColor) heads.instanceColor.needsUpdate=true;
+}
 let nBeams=0, beamsCaptured=0, emitting=false, segCount=0;
 const _a = new THREE.Vector3(), _zero = new THREE.Vector3();
 
@@ -485,18 +510,21 @@ function emitLight(){
   clearLight();
   let i=0;
   for(const y of COORDS) for(const z of COORDS){
-    const b=beam[i]; b.p.set(GRID_HALF,y,z); b.d.set(-1,0,0); b.last.copy(b.p); b.alive=true; b.pts=1; i++;
+    const b=beam[i]; b.p.set(GRID_HALF,y,z); b.d.set(-1,0,0); b.last.copy(b.p); b.alive=true; b.pts=1;
+    b.p0y=y; b.p0z=z; beamColorFor(y,z,b.col); heads.setColorAt(i,b.col); i++;
   }
+  heads.instanceColor.needsUpdate=true;
   nBeams=i; heads.count=nBeams; emitting=true;
   _s.setScalar(1);
   for(let k=0;k<nBeams;k++){ _m.compose(beam[k].p,_q.identity(),_s); heads.setMatrixAt(k,_m); }
   heads.instanceMatrix.needsUpdate=true; panelDirty=true; syncHTML();
 }
-function addSegment(b){
-  const arr=beamGeo.attributes.position.array, o=segCount*6;
+function addSegment(b,i){
+  const arr=beamGeo.attributes.position.array, col=beamGeo.attributes.color.array, o=segCount*6, c=b.col;
   arr[o]=b.last.x; arr[o+1]=b.last.y; arr[o+2]=b.last.z;
   arr[o+3]=b.p.x;  arr[o+4]=b.p.y;  arr[o+5]=b.p.z;
-  segCount++; b.last.copy(b.p); b.pts++;
+  col[o]=col[o+3]=c.r; col[o+1]=col[o+4]=c.g; col[o+2]=col[o+5]=c.b;
+  segBeam[segCount]=i; segCount++; b.last.copy(b.p); b.pts++;
 }
 // ray equation d(n d̂)/ds = ∇n  →  d d̂/ds = (∇n − (∇n·d̂) d̂)/n
 const _pm=new THREE.Vector3(), _dm=new THREE.Vector3(), _g=new THREE.Vector3();
@@ -529,12 +557,12 @@ function stepLight(dt){
     }
     if(b.alive && beamTime>BEAM_LIFE) b.alive=false;
     const out = Math.abs(b.p.x)>lim || Math.abs(b.p.y)>lim || Math.abs(b.p.z)>lim;
-    if(b.pts<BEAM_PTS && (b.p.distanceTo(b.last)>0.08 || !b.alive || out)) addSegment(b);
+    if(b.pts<BEAM_PTS && (b.p.distanceTo(b.last)>0.08 || !b.alive || out)) addSegment(b,i);
     if(out) b.alive=false;
     _s.setScalar(b.alive?1:0); _m.compose(b.p,_q.identity(),_s); heads.setMatrixAt(i,_m); headsDirty=true;
     if(b.alive) anyAlive=true;
   }
-  beamGeo.attributes.position.needsUpdate=true; beamGeo.setDrawRange(0, segCount*2);
+  beamGeo.attributes.position.needsUpdate=true; beamGeo.attributes.color.needsUpdate=true; beamGeo.setDrawRange(0, segCount*2);
   if(headsDirty) heads.instanceMatrix.needsUpdate=true;
   if(!anyAlive){ emitting=false; panelDirty=true; }
   if(!inVR()) $('rBeam').textContent = beamsCaptured+' / '+nBeams;
@@ -596,6 +624,7 @@ function setBallVis(v){ S.ballVis=Math.max(0,Math.min(1,v)); applyBallVis(); syn
 function setGridN(v){ const n=oddClamp(v); if(n===S.gridN) return; S.gridN=n; applyGridN(); syncHTML(); panelDirty=true; }
 function setSubdiv(v){ S.subdiv=Math.round(Math.max(SUBDIV_MIN,Math.min(SUBDIV_MAX,v))); buildGridBase(); syncHTML(); panelDirty=true; }
 function setPlaneY(v){ S.planeY=Math.max(-6,Math.min(6,v)); updatePlanePositions(); refreshClockColors(); syncHTML(); panelDirty=true; }
+function toggleBeamColor(){ S.beamColor = S.beamColor==='yellow' ? 'source' : 'yellow'; recolorBeams(); syncHTML(); panelDirty=true; }
 function toggleClockMode(){ S.clockMode = S.clockMode==='plane' ? 'nodes' : 'plane'; setClockVisibility(); syncHTML(); panelDirty=true; }
 function setGrid(b){ S.grid=b; grid.visible=b; syncHTML(); panelDirty=true; }
 function setClocks(b){ S.clocks=b; setClockVisibility(); syncHTML(); panelDirty=true; }
@@ -616,6 +645,7 @@ function syncHTML(){
   $('planeY').value = S.planeY;
   $('planeRow').style.display = (S.clocks && S.clockMode==='plane') ? 'flex' : 'none';
   $('clockMode').textContent = 'Clock view: ' + (S.clockMode==='plane' ? 'single plane' : 'all nodes');
+  $('beamColor').textContent = 'Beam colour: ' + (S.beamColor==='yellow' ? 'yellow' : 'by source');
   $('tGrid').checked = S.grid; $('tClocks').checked = S.clocks; $('tTrail').checked = S.trail;
 }
 $('mass').addEventListener('input', e=> setMass(parseFloat(e.target.value)));
@@ -629,6 +659,7 @@ $('helpclose').addEventListener('click', ()=> $('help').style.display='none');
 $('reset').addEventListener('click', resetProbe);
 $('emit').addEventListener('click', emitLight);
 $('clearLight').addEventListener('click', clearLight);
+$('beamColor').addEventListener('click', toggleBeamColor);
 $('tGrid').addEventListener('change', e=> setGrid(e.target.checked));
 $('tClocks').addEventListener('change', e=> setClocks(e.target.checked));
 $('tTrail').addEventListener('change', e=> setTrail(e.target.checked));
@@ -666,7 +697,8 @@ button('drop','Drop probe',   28,256,129,46, dropProbe);
 button('reset','Reset probe', 169,256,129,46, resetProbe);
 button('emit','Emit light',   310,256,129,46, emitLight);
 button('clear','Clear light', 451,256,129,46, clearLight);
-button('clockMode', ()=>'Clock view: '+(S.clockMode==='plane'?'single plane':'all nodes'), 28,352,552,44, toggleClockMode);
+button('clockMode', ()=>'Clock view: '+(S.clockMode==='plane'?'single plane':'all nodes'), 28,352,300,44, toggleClockMode);
+button('beamColor', ()=>'Beams: '+(S.beamColor==='yellow'?'yellow':'by source'), 340,352,240,44, toggleBeamColor);
 toggle('tGrid','space grid', 28,414,180, ()=>S.grid, setGrid);
 toggle('tClocks','clocks (time)', 228,414,190, ()=>S.clocks, setClocks);
 toggle('tTrail','probe trail', 428,414,150, ()=>S.trail, setTrail);
@@ -786,7 +818,7 @@ function drawHelp(c){
   y=P('Blue grid: space, warped by the central mass. Schwarzschild radius rs = Mass × 4.5. The cube always spans ±6 units; Grid nodes only changes how many lines fill it.',y);
   y=P('Clocks: the flow of time at each point. Red = slow, blue = fast. Single plane shows one slice you can sweep with Plane height; all nodes shows the whole 3D time field.',y);
   y=P('Probe: released at rest on the +x face of the cube, it falls along the time-flow gradient. The probe trail and the spacetime diagram record its path.',y);
-  y=P('Light: Emit fires one beam from every node on the +x face toward the mass. Beams follow exact Schwarzschild null geodesics (grid coordinates are isotropic: horizon at rs/4, photon sphere at 0.93 rs). Every beam with impact parameter b below 2.6 rs is captured, which is the black hole shadow; beams just outside skim the photon sphere and leave sideways or even backwards. Light also slows near the mass (Shapiro delay). At high Mass the shadow is wider than the cube face, so most beams are swallowed: that is what general relativity predicts.',y+4);
+  y=P('Light: Emit fires one beam from every node on the +x face toward the mass. Beams follow exact Schwarzschild null geodesics (grid coordinates are isotropic: horizon at rs/4, photon sphere at 0.93 rs). Every beam with impact parameter b below 2.6 rs is captured, which is the black hole shadow; beams just outside skim the photon sphere and leave sideways or even backwards. Light also slows near the mass (Shapiro delay). Beams: by source colours each beam by where it left the +x face (hue = direction from the face centre, brighter = further out), so you can tell which source a bent beam came from. At high Mass the shadow is wider than the cube face, so most beams are swallowed: that is what general relativity predicts.',y+4);
   y=H('Quest controls',y+8);
   y=P('Left stick: turn the model, push up or down to raise or lower it. Right stick: turn, push up or down to zoom. Hold grip on the model to move it. Point at this panel and hold grip to pick the panel up and place it anywhere. Trigger presses buttons and drags sliders. A or X drops the probe, B or Y resets it. Click either stick to bring the model and panel back in front of you.',y);
   y=H('Panel',y+8);
