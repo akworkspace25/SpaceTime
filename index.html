@@ -71,6 +71,8 @@
   <div class="kv"><span>Clock rate @ probe</span><b id="rDil">—</b></div>
   <div class="kv"><span>Probe height r</span><b id="rH">—</b></div>
   <div class="kv"><span>Fall speed</span><b id="rV">—</b></div>
+  <div class="kv"><span>Horizon radius (grid)</span><b id="rHor">—</b></div>
+  <div class="kv"><span>Capture radius b<sub>c</sub></span><b id="rBc">—</b></div>
   <div class="kv"><span>Beams captured</span><b id="rBeam">—</b></div>
   <div class="note">The probe falls toward the <b>slow-clock</b> region. That pull is the gradient of the
   time-flow field — <i>not</i> a spatial dent.</div>
@@ -115,6 +117,10 @@
     <input id="subdiv" type="range" min="8" max="120" step="1" value="24"/>
   </div>
   <div class="row">
+    <label for="clockSize">Clock dial size</label>
+    <input id="clockSize" type="range" min="0.15" max="1.5" step="0.01" value="1"/>
+  </div>
+  <div class="row">
     <label for="ballVis">Ball size (visual only)</label>
     <input id="ballVis" type="range" min="0" max="1" step="0.001" value="1"/>
   </div>
@@ -144,7 +150,7 @@
   <p>Blue grid: space, warped by the central mass; r<sub>s</sub> = Mass × 4.5. The cube always spans ±6 units — Grid nodes only changes how many lines fill it.</p>
   <p>Clocks: flow of time at each point. Red = slow, blue = fast. Single plane shows one slice (sweep with Plane height); all nodes shows the full 3D time field.</p>
   <p>Probe: released at rest on the +x face of the cube, it falls along the time-flow gradient. The probe trail and the spacetime diagram record its path.</p>
-  <p>Light: Emit fires one beam from every node on the +x face toward the mass. Beams keep speed c and only change direction, with twice the Newtonian pull as in general relativity. A beam that comes within r<sub>s</sub> is captured.</p>
+  <p>Light: Emit fires one beam from every node on the +x face toward the mass. Beams follow exact Schwarzschild null geodesics (grid coordinates are isotropic: horizon at r<sub>s</sub>/4, photon sphere at 0.93 r<sub>s</sub>). Every beam with impact parameter b &lt; 2.6 r<sub>s</sub> is captured (the black-hole shadow); beams just outside skim the photon sphere and exit sideways or backwards. At high Mass the shadow exceeds the cube face, so most beams are swallowed, as GR predicts.</p>
   <div class="sec">Desktop</div>
   <p>Drag to orbit, scroll or pinch to zoom. All controls are in the bottom-left box.</p>
   <div class="sec">Quest</div>
@@ -181,13 +187,15 @@ const BALL_R = 0.9;
 const BALL_VIS_MIN = 0.02;
 const HAND_SPEED = 2.4;
 const NODE_SCALE = 0.62;
+const CLOCK_SIZE_MIN = 0.15, CLOCK_SIZE_MAX = 1.5;
 const PROBE_START = new THREE.Vector3(GRID_HALF,0,0);   // released on the +x face of the outer cube
 const C_LIGHT = 8.0;                      // beam speed, world units / s (deflection ∝ 1/c²)
 const BEAM_MAX = GRID_N_MAX*GRID_N_MAX;   // one beam per node on the +x face
-const BEAM_PTS = 160;                     // recorded points per beam
+const BEAM_PTS = 400;                     // recorded points per beam (loops near the photon sphere need many)
+const BEAM_LIFE = 15;                     // s, safety cut for beams stuck near the unstable photon orbit
 const VR_SCALE = 0.13, VR_SCALE_MIN = 0.04, VR_SCALE_MAX = 0.9;
 
-const S = { mass:0.25, rs:0.25*RS_MAX, ballVis:1.0, gridN:7, subdiv:SUBDIV_DEFAULT, planeY:0,
+const S = { mass:0.25, rs:0.25*RS_MAX, ballVis:1.0, clockSize:1.0, gridN:7, subdiv:SUBDIV_DEFAULT, planeY:0,
             clockMode:'plane', grid:true, clocks:true, trail:true };
 let COORDS = [];
 function makeCoords(n){ COORDS = Array.from({length:n}, (_,i)=> -GRID_HALF + 2*GRID_HALF*i/(n-1)); }
@@ -277,10 +285,19 @@ function warp(x,y,z){
   const s = (r-disp)/r;
   return [x*s, y*s, z*s];
 }
-function dilation(r){
-  const v = 1 - S.rs/Math.max(r, S.rs*1.0001);
-  return Math.sqrt(Math.max(v, 0.02));
+// Static-observer clock rate in isotropic coordinates: sqrt(-g_tt) = (1-a)/(1+a), a = rs/(4ρ). Horizon at ρ = rs/4.
+function dilation(rho){
+  const a = S.rs/(4*Math.max(rho,1e-9));
+  return a >= 1 ? 0.02 : Math.max((1-a)/(1+a), 0.02);
 }
+// Exact optics of the Schwarzschild metric (Fermat): light moves in flat 3-space with index n(ρ) = (1+a)^3/(1-a).
+function refIndex(rho){ const a=S.rs/(4*rho); return a>=1 ? Infinity : (1+a)**3/(1-a); }
+function refIndexGrad(rho){                       // dn/dρ
+  const a=S.rs/(4*rho); if(a>=1) return Infinity;
+  return (1+a)*(1+a)*(4-2*a)/((1-a)*(1-a)) * (-a/rho);
+}
+const rhoHorizon = () => S.rs/4;
+const bCritical  = () => 1.5*Math.sqrt(3)*S.rs;    // shadow radius: b < 3√3/2 rs is captured
 const mu = () => 8.0*S.mass + 0.02;       // Newtonian strength used by probe; light uses 2·mu
 const _c = new THREE.Color();
 function colorForRate(rate){ return _c.setHSL(0.66*rate, 0.75, 0.55); }
@@ -380,7 +397,7 @@ function buildNodeList(){
 
 const _m=new THREE.Matrix4(), _q=new THREE.Quaternion(), _qz=new THREE.Quaternion(), _s=new THREE.Vector3(), _zAxis=new THREE.Vector3(0,0,1);
 function writeClocks(list, rings, hands, qBase, scale, dt, doRings){
-  _s.setScalar(scale);
+  _s.setScalar(scale*S.clockSize);
   for(let i=0;i<list.length;i++){
     const c = list[i];
     c.angle -= dilation(c.r)*HAND_SPEED*dt;
@@ -461,7 +478,7 @@ let nBeams=0, beamsCaptured=0, emitting=false, segCount=0;
 const _a = new THREE.Vector3(), _zero = new THREE.Vector3();
 
 function clearLight(){
-  nBeams=0; beamsCaptured=0; emitting=false; segCount=0;
+  nBeams=0; beamsCaptured=0; emitting=false; segCount=0; beamTime=0;
   beamGeo.setDrawRange(0,0); heads.count=0; panelDirty=true; syncHTML();
 }
 function emitLight(){
@@ -481,20 +498,36 @@ function addSegment(b){
   arr[o+3]=b.p.x;  arr[o+4]=b.p.y;  arr[o+5]=b.p.z;
   segCount++; b.last.copy(b.p); b.pts++;
 }
+// ray equation d(n d̂)/ds = ∇n  →  d d̂/ds = (∇n − (∇n·d̂) d̂)/n
+const _pm=new THREE.Vector3(), _dm=new THREE.Vector3(), _g=new THREE.Vector3();
+function rayCurv(p,d,out){
+  const rho=p.length();
+  if(rho<1e-6 || S.rs<=0){ out.set(0,0,0); return; }
+  const n=refIndex(rho), g=refIndexGrad(rho);
+  if(!isFinite(n)){ out.set(0,0,0); return; }
+  _g.copy(p).multiplyScalar(g/rho);                 // ∇n
+  out.copy(_g).addScaledVector(d, -_g.dot(d)).multiplyScalar(1/n);
+}
+let beamTime=0;
 function stepLight(dt){
   if(!emitting) return;
-  const SUB=4, h=dt/SUB, mu2=2*mu(), capture=Math.max(S.rs, 0.12), lim=GRID_HALF+1.5;
+  beamTime+=dt;
+  const SUB=8, lim=GRID_HALF+1.5, rh=rhoHorizon()*1.02, N_CAP=60;
   let anyAlive=false, headsDirty=false;
   for(let i=0;i<nBeams;i++){
     const b=beam[i]; if(!b.alive) continue;
     for(let k=0;k<SUB;k++){
-      const r=b.p.length();
-      if(r<capture){ b.alive=false; beamsCaptured++; break; }
-      const amag = mu2/(r*r + SOFT*SOFT);
-      _a.copy(b.p).multiplyScalar(-amag/r);           // toward the mass
-      b.d.addScaledVector(_a, h).normalize();          // |v| = c: only the direction changes
-      b.p.addScaledVector(b.d, C_LIGHT*h);
+      const rho=b.p.length(), n=refIndex(rho);
+      if(rho<=rh || n>N_CAP){ b.alive=false; beamsCaptured++; break; }
+      const ds = C_LIGHT*dt/(SUB*n);                  // coordinate speed c/n: light visibly slows near the mass
+      rayCurv(b.p,b.d,_a);                            // midpoint (RK2) step
+      _pm.copy(b.p).addScaledVector(b.d,0.5*ds);
+      _dm.copy(b.d).addScaledVector(_a,0.5*ds).normalize();
+      rayCurv(_pm,_dm,_a);
+      b.p.addScaledVector(_dm,ds);
+      b.d.addScaledVector(_a,ds).normalize();
     }
+    if(b.alive && beamTime>BEAM_LIFE) b.alive=false;
     const out = Math.abs(b.p.x)>lim || Math.abs(b.p.y)>lim || Math.abs(b.p.z)>lim;
     if(b.pts<BEAM_PTS && (b.p.distanceTo(b.last)>0.08 || !b.alive || out)) addSegment(b);
     if(out) b.alive=false;
@@ -558,6 +591,7 @@ function applyMass(){
 function applyGridN(){ makeCoords(S.gridN); buildGridBase(); buildNodeList(); refreshClockColors(); clearLight(); }
 const oddClamp = v => { v=Math.round(Math.max(GRID_N_MIN,Math.min(GRID_N_MAX,v))); return v%2? v : Math.min(GRID_N_MAX, v+1); };
 function setMass(v){ S.mass=Math.max(0,Math.min(1,v)); applyMass(); syncHTML(); panelDirty=true; }
+function setClockSize(v){ S.clockSize=Math.max(CLOCK_SIZE_MIN,Math.min(CLOCK_SIZE_MAX,v)); planeRingsDirty=true; syncHTML(); panelDirty=true; }
 function setBallVis(v){ S.ballVis=Math.max(0,Math.min(1,v)); applyBallVis(); syncHTML(); panelDirty=true; }
 function setGridN(v){ const n=oddClamp(v); if(n===S.gridN) return; S.gridN=n; applyGridN(); syncHTML(); panelDirty=true; }
 function setSubdiv(v){ S.subdiv=Math.round(Math.max(SUBDIV_MIN,Math.min(SUBDIV_MAX,v))); buildGridBase(); syncHTML(); panelDirty=true; }
@@ -571,9 +605,12 @@ function syncHTML(){
   $('mass').value = S.mass;
   $('rMass').textContent = S.mass.toFixed(2);
   $('rRs').textContent = S.rs.toFixed(2);
+  $('rHor').textContent = rhoHorizon().toFixed(2);
+  $('rBc').textContent = bCritical().toFixed(2);
   $('rBeam').textContent = nBeams ? beamsCaptured+' / '+nBeams : '—';
   $('mptr').style.left = (S.mass*100)+'%';
   $('ballVis').value = S.ballVis;
+  $('clockSize').value = S.clockSize;
   $('gridN').value = S.gridN;
   $('subdiv').value = S.subdiv;
   $('planeY').value = S.planeY;
@@ -583,6 +620,7 @@ function syncHTML(){
 }
 $('mass').addEventListener('input', e=> setMass(parseFloat(e.target.value)));
 $('ballVis').addEventListener('input', e=> setBallVis(parseFloat(e.target.value)));
+$('clockSize').addEventListener('input', e=> setClockSize(parseFloat(e.target.value)));
 $('gridN').addEventListener('input', e=> setGridN(parseFloat(e.target.value)));
 $('subdiv').addEventListener('input', e=> setSubdiv(parseFloat(e.target.value)));
 $('drop').addEventListener('click', dropProbe);
@@ -605,13 +643,13 @@ window.addEventListener('resize', ()=>{
 // =====================================================================
 //  VR control panel — canvas texture, two pages (main / help)
 // =====================================================================
-const PW=960, PH=780;
+const PW=960, PH=810;
 const pcv = document.createElement('canvas'); pcv.width=PW; pcv.height=PH;
 const pctx = pcv.getContext('2d');
 const panelTex = new THREE.CanvasTexture(pcv);
 panelTex.colorSpace = THREE.SRGBColorSpace;
 panelTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.52),
+const panel = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.54),
   new THREE.MeshBasicMaterial({map:panelTex, transparent:true, side:THREE.DoubleSide}));
 panel.visible=false; scene.add(panel);
 let panelDirty = true, page = 'main';
@@ -632,10 +670,11 @@ button('clockMode', ()=>'Clock view: '+(S.clockMode==='plane'?'single plane':'al
 toggle('tGrid','space grid', 28,414,180, ()=>S.grid, setGrid);
 toggle('tClocks','clocks (time)', 228,414,190, ()=>S.clocks, setClocks);
 toggle('tTrail','probe trail', 428,414,150, ()=>S.trail, setTrail);
-slider('gridN','Grid nodes per edge (cube size fixed)', 28,520,552, GRID_N_MIN,GRID_N_MAX, ()=>S.gridN, setGridN, null, v=>`${v} × ${v} × ${v}`);
-slider('subdiv','Grid detail (segments per line)', 28,586,552, SUBDIV_MIN,SUBDIV_MAX, ()=>S.subdiv, setSubdiv, null, v=>v.toFixed(0));
-slider('ballVis','Ball size (visual only)', 28,652,552, 0,1, ()=>S.ballVis, setBallVis);
-slider('planeY','Plane height Y', 28,718,552, -6,6, ()=>S.planeY, setPlaneY, ()=>S.clocks && S.clockMode==='plane');
+slider('gridN','Grid nodes per edge (cube size fixed)', 28,516,552, GRID_N_MIN,GRID_N_MAX, ()=>S.gridN, setGridN, null, v=>`${v} × ${v} × ${v}`);
+slider('subdiv','Grid detail (segments per line)', 28,574,552, SUBDIV_MIN,SUBDIV_MAX, ()=>S.subdiv, setSubdiv, null, v=>v.toFixed(0));
+slider('clockSize','Clock dial size', 28,632,552, CLOCK_SIZE_MIN,CLOCK_SIZE_MAX, ()=>S.clockSize, setClockSize);
+slider('ballVis','Ball size (visual only)', 28,690,552, 0,1, ()=>S.ballVis, setBallVis);
+slider('planeY','Plane height Y', 28,748,552, -6,6, ()=>S.planeY, setPlaneY, ()=>S.clocks && S.clockMode==='plane');
 // right column (x 620..932)
 button('help','?  HELP', 780,22,152,50, ()=>{ page='help'; panelDirty=true; }, 'main', true);
 button('close','✕  CLOSE', 780,22,152,50, ()=>{ page='main'; panelDirty=true; }, 'help', true);
@@ -709,7 +748,8 @@ function drawMain(c){
   const rp = probe.position.length();
   const rows=[['Mass (scaled)',S.mass.toFixed(2)],['Schwarzschild rs',S.rs.toFixed(2)],
               ['Clock rate @ probe',dilation(rp).toFixed(3)],['Probe height r',rp.toFixed(2)],
-              ['Fall speed',vel.length().toFixed(2)],['Beams captured', nBeams? beamsCaptured+' / '+nBeams : '—']];
+              ['Fall speed',vel.length().toFixed(2)],['Horizon radius (grid)',rhoHorizon().toFixed(2)],
+              ['Capture radius bc',bCritical().toFixed(2)],['Beams captured', nBeams? beamsCaptured+' / '+nBeams : '—']];
   rows.forEach((r,i)=>{
     const y=100+i*26;
     c.textAlign='left'; c.fillStyle='#8b97b5'; c.font='16px '+FONT; c.fillText(r[0],620,y);
@@ -720,16 +760,16 @@ function drawMain(c){
   // clock legend
   const lg=c.createLinearGradient(720,0,880,0);
   [['#ff4d4d',0],['#ffd24d',.33],['#7dff8f',.66],['#4dc3ff',1]].forEach(s=>lg.addColorStop(s[1],s[0]));
-  c.fillStyle='#8b97b5'; c.font='14px '+FONT; c.textBaseline='middle'; c.fillText('clocks: slow',620,290);
-  c.fillStyle=lg; rr(c,720,285,160,10,5); c.fill();
-  c.fillStyle='#8b97b5'; c.fillText('fast',890,290); c.textBaseline='alphabetic';
+  c.fillStyle='#8b97b5'; c.font='14px '+FONT; c.textBaseline='middle'; c.fillText('clocks: slow',620,330);
+  c.fillStyle=lg; rr(c,720,325,160,10,5); c.fill();
+  c.fillStyle='#8b97b5'; c.fillText('fast',890,330); c.textBaseline='alphabetic';
 
   // spacetime diagram
-  c.fillStyle='#8b97b5'; c.font='14px '+FONT; c.fillText('Spacetime diagram: time up, height across',620,326);
-  c.fillStyle='#080b14'; rr(c,620,334,312,226,10); c.fill();
-  drawSpacetime(c,620,334,312,226);
+  c.fillStyle='#8b97b5'; c.font='14px '+FONT; c.fillText('Spacetime diagram: time up, height across',620,362);
+  c.fillStyle='#080b14'; rr(c,620,370,312,220,10); c.fill();
+  drawSpacetime(c,620,370,312,220);
   c.fillStyle='#8b97b5'; c.font='14px '+FONT;
-  let y=wrapText(c,'Dashed: a still object, fixed height, moving up the time axis. Blue: the falling probe.',620,584,312,19);
+  let y=wrapText(c,'Dashed: a still object, fixed height, moving up the time axis. Blue: the falling probe.',620,614,312,19);
   c.fillStyle='#6f7c9c'; c.font='13px '+FONT;
   y=wrapText(c,'Grip on the model moves it. Grip while pointing here picks this panel up.',620,y+10,312,18);
   wrapText(c,'Trigger presses. Click a stick to recenter.',620,y,312,18);
@@ -746,11 +786,11 @@ function drawHelp(c){
   y=P('Blue grid: space, warped by the central mass. Schwarzschild radius rs = Mass × 4.5. The cube always spans ±6 units; Grid nodes only changes how many lines fill it.',y);
   y=P('Clocks: the flow of time at each point. Red = slow, blue = fast. Single plane shows one slice you can sweep with Plane height; all nodes shows the whole 3D time field.',y);
   y=P('Probe: released at rest on the +x face of the cube, it falls along the time-flow gradient. The probe trail and the spacetime diagram record its path.',y);
-  y=P('Light: Emit fires one beam from every node on the +x face toward the mass. Beams keep speed c and only change direction, with twice the Newtonian pull as in general relativity. A beam that comes within rs is captured. Raise Mass to see them bend and then vanish.',y+4);
+  y=P('Light: Emit fires one beam from every node on the +x face toward the mass. Beams follow exact Schwarzschild null geodesics (grid coordinates are isotropic: horizon at rs/4, photon sphere at 0.93 rs). Every beam with impact parameter b below 2.6 rs is captured, which is the black hole shadow; beams just outside skim the photon sphere and leave sideways or even backwards. Light also slows near the mass (Shapiro delay). At high Mass the shadow is wider than the cube face, so most beams are swallowed: that is what general relativity predicts.',y+4);
   y=H('Quest controls',y+8);
   y=P('Left stick: turn the model, push up or down to raise or lower it. Right stick: turn, push up or down to zoom. Hold grip on the model to move it. Point at this panel and hold grip to pick the panel up and place it anywhere. Trigger presses buttons and drags sliders. A or X drops the probe, B or Y resets it. Click either stick to bring the model and panel back in front of you.',y);
   y=H('Panel',y+8);
-  y=P('Mass drives all physics. Ball size is visual only and does not change gravity, clocks or light. Grid nodes sets node density from 5 to 15 per edge. Grid detail sets segments per line; raise it if warped lines look angular. On Quest, keep Grid nodes at 11 or below in all-nodes clock view if the frame rate drops.',y);
+  y=P('Mass drives all physics. Ball size is visual only and does not change gravity, clocks or light. Grid nodes sets node density from 5 to 15 per edge. Grid detail sets segments per line; raise it if warped lines look angular. Clock dial size scales every clock, useful at 15 × 15 × 15. On Quest, keep Grid nodes at 11 or below in all-nodes clock view if the frame rate drops.',y);
   for(const w of W) if(w.page==='help') drawWidget(c,w);
 }
 function drawPanel(){
